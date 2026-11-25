@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprachen in Hamburgs Stadtteilen</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<style>
+:root{--blue:#004f80;--green:#0a7d4f;--light:#f4f7fa}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#17242e;background:#fff}
+header{background:var(--blue);color:#fff;padding:18px 20px}
+header h1{margin:0;font-size:20px}
+header p{margin:6px 0 0;font-size:14px;opacity:.9}
+main{display:grid;grid-template-columns:minmax(0,1fr) 380px;min-height:calc(100vh - 92px)}
+#map{height:100%;min-height:60vh}
+#panel{padding:18px;background:var(--light);overflow-y:auto;border-left:1px solid #d8e1e8}
+.card{background:#fff;border:1px solid #d8e1e8;border-radius:12px;padding:16px;margin-bottom:14px}
+h2{font-size:16px;margin:0 0 10px}
+label{display:block;font-size:14px;font-weight:600;margin:10px 0 6px}
+select,input[type=text],textarea{width:100%;padding:10px;border:1px solid #b7c4cd;border-radius:8px;font-size:15px;background:#fff}
+.langs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.lang{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #b7c4cd;border-radius:8px;padding:9px 10px;font-size:14px}
+.lang input{accent-color:var(--green)}
+button{width:100%;border:0;border-radius:9px;padding:12px;font-size:15px;font-weight:700;cursor:pointer}
+.primary{background:var(--green);color:#fff;margin-top:14px}
+.secondary{background:#fff;color:var(--blue);border:1px solid var(--blue);margin-top:8px}
+#qr{display:flex;justify-content:center;padding:8px;background:#fff;border-radius:8px}
+#qr canvas,#qr img{max-width:170px}
+small{color:#546877;display:block;margin-top:8px;line-height:1.45}
+#status{font-size:14px;font-weight:600;margin-top:10px}
+@media(max-width:900px){main{grid-template-columns:1fr}#map{height:52vh}#panel{border-left:0}}
+</style>
+</head>
+<body>
+<header>
+<h1>Sprachen in Hamburgs Stadtteilen</h1>
+<p>Wählen Sie Ihren Stadtteil und geben Sie an, welche Sprachen Sie fließend sprechen. Die Teilnahme ist anonym.</p>
+</header>
+<main>
+<div id="map"></div>
+<div id="panel">
+<div class="card">
+<h2>Ihr Beitrag</h2>
+<label for="district">Stadtteil</label>
+<select id="district"><option value="">Bitte Stadtteil wählen …</option></select>
+<label>Sprachen, die Sie fließend sprechen</label>
+<div class="langs" id="langs"></div>
+<label for="other">Weitere Sprache(n)</label>
+<input id="other" type="text" placeholder="z. B. Kurdisch, Farsi, Vietnamesisch …">
+<label for="note">Optionale Anmerkung</label>
+<textarea id="note" rows="2" placeholder="Optional, ohne persönliche Angaben"></textarea>
+<button class="primary" id="save">Beitrag anonym speichern</button>
+<button class="secondary" id="export">Ergebnisse als CSV herunterladen</button>
+<div id="status"></div>
+<small>Die Daten bleiben zunächst lokal in diesem Browser gespeichert. Für eine öffentliche Beteiligung sollten sie über ein DIPAS-Verfahren bzw. einen datenschutzkonformen Server gesammelt werden.</small>
+</div>
+<div class="card">
+<h2>QR-Code zur Eingabe</h2>
+<div id="qr"></div>
+<small>Scannen Sie den Code mit dem Smartphone, um direkt einen Beitrag abzugeben. Der QR-Code verweist auf die Adresse dieser Seite.</small>
+</div>
+</div>
+</main>
+<script>
+const LANGS=["Deutsch","Türkisch","Arabisch","Polnisch","Russisch","Englisch","Ukrainisch","Italienisch","Spanisch","Portugiesisch","Französisch","Farsi/Persisch","Kurdisch","Dari","Paschtu","Vietnamesisch","Chinesisch","Romanes","Somali","Amharisch"];
+const STORE="hh_sprachkarte_beitraege";
+const map=L.map('map',{zoomControl:true}).setView([53.551,10.006],10);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap-Mitwirkende'}).addTo(map);
+let selected=null, geoLayer=null;
+const districtSelect=document.getElementById('district');
+const langsBox=document.getElementById('langs');
+LANGS.forEach(l=>{const d=document.createElement('label');d.className='lang';d.innerHTML=`<input type="checkbox" value="${l}"><span>${l}</span>`;langsBox.appendChild(d);});
+function load(){return JSON.parse(localStorage.getItem(STORE)||'[]')}
+function save(d){localStorage.setItem(STORE,JSON.stringify(d))}
+function styleFor(f){const n=(load().filter(x=>x.stadtteil===f.properties.__name__).length);return{color:'#31576d',weight:1,fillColor:n?'#0a7d4f':'#dfe8ee',fillOpacity:selected===f.properties.__name__?0.75:0.35}}
+function refresh(){if(geoLayer)geoLayer.eachLayer(l=>l.setStyle(styleFor(l.feature)))}
+fetch('https://raw.githubusercontent.com/blackmad/neighborhoods/master/hamburg.geojson')
+.then(r=>{if(!r.ok)throw new Error('GeoJSON nicht erreichbar');return r.json()})
+.then(gj=>{
+ const nameKeys=['name','NAME','Stadtteil','stadtteil','district','District','Gemeindename'];
+ gj.features.forEach(f=>{f.properties.__name__=nameKeys.map(k=>f.properties?.[k]).find(v=>typeof v==='string'&&v.trim())||'Unbekannter Stadtteil'});
+ geoLayer=L.geoJSON(gj,{style:styleFor,onEachFeature:(f,l)=>{
+  l.bindTooltip(f.properties.__name__,{sticky:true});
+  l.on('click',()=>{selected=f.properties.__name__;districtSelect.value=selected;refresh();document.getElementById('status').textContent='Stadtteil ausgewählt: '+selected;});
+ }}).addTo(map);
+ [...new Set(gj.features.map(f=>f.properties.__name__))].sort((a,b)=>a.localeCompare(b,'de')).forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;districtSelect.appendChild(o)});
+ map.fitBounds(geoLayer.getBounds());
+}).catch(e=>{document.getElementById('status').textContent='Kartendaten konnten nicht geladen werden: '+e.message});
+document.getElementById('save').onclick=()=>{
+ const district=districtSelect.value;
+ const langs=[...document.querySelectorAll('#langs input:checked')].map(i=>i.value);
+ const other=document.getElementById('other').value.trim();
+ const note=document.getElementById('note').value.trim();
+ if(!district){document.getElementById('status').textContent='Bitte zuerst einen Stadtteil auswählen.';return}
+ if(!langs.length&&!other){document.getElementById('status').textContent='Bitte mindestens eine Sprache angeben.';return}
+ const entries=load();entries.push({stadtteil:district,sprachen:langs,weitere_sprachen:other,anmerkung:note,zeitstempel:new Date().toISOString()});
+ save(entries);refresh();
+ document.getElementById('status').textContent='Danke! Ihr anonymer Beitrag wurde lokal gespeichert.';
+ langsBox.querySelectorAll('input').forEach(i=>i.checked=false);document.getElementById('other').value='';document.getElementById('note').value='';
+};
+document.getElementById('export').onclick=()=>{
+ const rows=load();if(!rows.length){document.getElementById('status').textContent='Es sind noch keine Beiträge gespeichert.';return}
+ const csv=['Stadtteil;Sprachen;Weitere Sprachen;Anmerkung;Zeitstempel'].concat(rows.map(r=>[r.stadtteil,r.sprachen.join(', '),r.weitere_sprachen,r.anmerkung,r.zeitstempel].map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';'))).join('\n');
+ const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent('\ufeff'+csv);a.download='sprachkarte_hamburg.csv';a.click();
+};
+QRCode.toCanvas(document.getElementById('qr'),location.href,{width:170,margin:1},err=>{if(err)document.getElementById('qr').textContent='QR-Code konnte nicht erzeugt werden.'});
+</script>
+</body>
+</html>
